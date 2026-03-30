@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TTT Tester</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+  h2 { color: #0f9; margin-bottom: 14px; }
+  .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 14px; }
+  h3 { color: #aaa; margin-bottom: 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+  input, select { background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 6px 10px; margin-bottom: 8px; width: 100%; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  button { background: #0f9; color: #000; border: none; border-radius: 4px; padding: 8px 14px; cursor: pointer; font-weight: bold; margin-right: 6px; margin-bottom: 6px; font-family: monospace; }
+  button.red { background: #f44; color: #fff; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; background: #222; border: 1px solid #444; margin-left: 8px; }
+  .badge.green { border-color: #0f9; color: #0f9; }
+  .badge.red { border-color: #f44; color: #f44; }
+  .board { display: grid; grid-template-columns: repeat(3, 90px); gap: 6px; margin: 12px 0; }
+  .cell { width: 90px; height: 90px; background: #222; border: 2px solid #444; border-radius: 8px; font-size: 2.2rem; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .cell:hover { background: #2a2a2a; }
+  .cell.taken { cursor: default; }
+  .cell.X { color: #0f9; }
+  .cell.O { color: #f90; }
+  .cell.win { border-color: #0f9; background: #0a2a0a; }
+  .info { font-size: 13px; color: #888; margin-bottom: 8px; }
+  .info span { color: #eee; }
+  #result { font-size: 1.3rem; font-weight: bold; margin-top: 8px; }
+  #log { background: #000; border: 1px solid #222; border-radius: 4px; padding: 10px; height: 200px; overflow-y: auto; font-size: 11px; }
+  .i { color: #666; }
+  .ok { color: #0f9; }
+  .er { color: #f44; }
+  .st { color: #fa0; }
+  label { font-size: 11px; color: #666; display: block; margin-bottom: 3px; }
+  #lb-out { white-space: pre; font-size: 12px; color: #aaa; margin-top: 8px; line-height: 1.8; }
+  #timer { font-size: 1.2rem; font-weight: bold; color: #fa0; margin-left: 8px; }
+  #match-list { font-size: 12px; color: #888; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h2>🎮 Tic-Tac-Toe — Backend Tester</h2>
+
+<div class="card">
+  <h3>1. Connect</h3>
+  <div class="row">
+    <div><label>Host</label><input id="host" value="localhost"></div>
+    <div><label>Port</label><input id="port" value="7350"></div>
+  </div>
+  <div class="row">
+    <div><label>Username</label><input id="uname" value="player1"></div>
+    <div><label>Password</label><input id="pass" type="password" value="password"></div>
+  </div>
+  <button onclick="doConnect()">Connect</button>
+  <span id="conn-badge" class="badge">disconnected</span>
+</div>
+
+<div class="card">
+  <h3>2. Matchmaking</h3>
+  <div style="max-width:300px">
+    <label>Mode</label>
+    <select id="mode">
+      <option value="false">Classic</option>
+      <option value="true">Timed (30s)</option>
+    </select>
+  </div>
+  <button onclick="findMatch()">Auto Find / Create Match</button>
+  <button onclick="listMatches()">List Open Matches</button>
+  <div id="match-list"></div>
+</div>
+
+<div class="card">
+  <h3>3. Game</h3>
+  <div class="info">
+    Status: <span id="gs">—</span> &nbsp;|&nbsp;
+    You are: <span id="gm">—</span> &nbsp;|&nbsp;
+    Turn: <span id="gt">—</span>
+    <span id="timer"></span>
+  </div>
+  <div class="board" id="board">
+    <div class="cell" onclick="move(0)"></div>
+    <div class="cell" onclick="move(1)"></div>
+    <div class="cell" onclick="move(2)"></div>
+    <div class="cell" onclick="move(3)"></div>
+    <div class="cell" onclick="move(4)"></div>
+    <div class="cell" onclick="move(5)"></div>
+    <div class="cell" onclick="move(6)"></div>
+    <div class="cell" onclick="move(7)"></div>
+    <div class="cell" onclick="move(8)"></div>
+  </div>
+  <div id="result"></div>
+  <button class="red" onclick="leaveMatch()" style="margin-top:10px">Leave Match</button>
+</div>
+
+<div class="card">
+  <h3>4. Leaderboard &amp; Stats</h3>
+  <button onclick="getLeaderboard()">Leaderboard</button>
+  <button onclick="getMyStats()">My Stats</button>
+  <div id="lb-out"></div>
+</div>
+
+<div class="card">
+  <h3>Log <button onclick="clearLog()" style="padding:2px 8px;font-size:11px;margin-left:8px">Clear</button></h3>
+  <div id="log"></div>
+</div>
+
+<script>
+var BASE, token, userId, ws, matchId, myMark, lastState;
+
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+
+function log(msg, cls) {
+  var el = document.getElementById('log');
+  var d = document.createElement('div');
+  d.className = cls || 'i';
+  d.textContent = '[' + new Date().toISOString().slice(11,19) + '] ' + msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setBadge(id, text, good) {
+  var el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'badge ' + (good ? 'green' : 'red');
+}
+
+function pad(s, n) {
+  s = String(s);
+  while (s.length < n) s += ' ';
+  return s;
+}
+
+function parseJwt(t) {
+  try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return {}; }
+}
+
+// Convert Lua 1-indexed table (comes as object {"1":"X","2":"",...}) to JS array [0..8]
+function luaArrayToJs(obj) {
+  if (Array.isArray(obj)) return obj;
+  var arr = [];
+  for (var i = 1; i <= 9; i++) {
+    arr.push(obj[String(i)] !== undefined ? obj[String(i)] : '');
+  }
+  return arr;
+}
+
+// Convert winning_line from Lua to array of numbers
+function normalizeWinLine(wl) {
+  if (!wl) return [];
+  if (Array.isArray(wl)) return wl.map(Number);
+  var arr = [];
+  for (var k in wl) { arr.push(Number(wl[k])); }
+  return arr;
+}
+
+// ── Connect ───────────────────────────────────────────────────────────────
+function doConnect() {
+  var host  = document.getElementById('host').value;
+  var port  = document.getElementById('port').value;
+  var uname = document.getElementById('uname').value;
+  var pass  = document.getElementById('pass').value;
+  BASE = 'http://' + host + ':' + port;
+
+  fetch(BASE + '/v2/account/authenticate/email?create=true&username=' + encodeURIComponent(uname), {
+    method: 'POST',
+    headers: { 'Authorization': 'Basic ' + btoa('defaultkey:'), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: uname + '@test.com', password: pass })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (!data.token) { log('Auth failed: ' + JSON.stringify(data), 'er'); return; }
+    token  = data.token;
+    userId = parseJwt(token).uid;
+    log('Authenticated as ' + uname + ' (' + userId + ')', 'ok');
+    setBadge('conn-badge', '✓ ' + uname, true);
+    openSocket(host, port);
+  })
+  .catch(function(e) { log('Auth error: ' + e.message, 'er'); });
+}
+
+function openSocket(host, port) {
+  var url = 'ws://' + host + ':' + port + '/ws?lang=en&status=true&token=' + encodeURIComponent(token);
+  ws = new WebSocket(url);
+  ws.onopen    = function() { log('WebSocket connected', 'ok'); };
+  ws.onclose   = function() { log('WebSocket closed', 'er'); setBadge('conn-badge', 'disconnected', false); };
+  ws.onerror   = function() { log('WebSocket error', 'er'); };
+  ws.onmessage = function(e) {
+    try { handleMsg(JSON.parse(e.data)); }
+    catch(err) { log('Parse error: ' + err.message, 'er'); }
+  };
+}
+
+// ── WebSocket messages ────────────────────────────────────────────────────
+function handleMsg(msg) {
+  if (msg.match_data) {
+    var op      = msg.match_data.op_code;
+    var payload = JSON.parse(atob(msg.match_data.data));
+
+    if (op == 11) {
+      lastState = payload;
+      log('State: status=' + payload.status + ' turn=' + payload.turn + ' winner=' + (payload.winner || '-'), 'st');
+      updateGame(payload);
+    } else if (op == 12) {
+      log('Server error: ' + payload.code + ' — ' + payload.message, 'er');
+    } else if (op == 13) {
+      var secs = payload.remaining_seconds;
+      var el = document.getElementById('timer');
+      el.textContent = '⏱ ' + secs + 's';
+      el.style.color = secs <= 5 ? '#f44' : '#fa0';
+    }
+  } else if (msg.match_presence_event) {
+    var ev = msg.match_presence_event;
+    (ev.joins  || []).forEach(function(p) { log(p.username + ' joined', 'ok'); });
+    (ev.leaves || []).forEach(function(p) { log(p.username + ' left',   'er'); });
+  } else if (msg.match) {
+    matchId = msg.match.match_id;
+    log('Joined match: ' + matchId, 'ok');
+  }
+}
+
+// ── Matchmaking ───────────────────────────────────────────────────────────
+function findMatch() {
+  var timed = document.getElementById('mode').value === 'true';
+  rpc('rpc_find_match', { timed_mode: timed }, function(data) {
+    if (data.success) {
+      log('Match: ' + data.data.match_id + ' created=' + data.data.created, 'ok');
+      joinMatchSocket(data.data.match_id);
+    } else {
+      log('rpc_find_match failed: ' + JSON.stringify(data), 'er');
+    }
+  });
+}
+
+function joinMatchSocket(id) {
+  if (!ws || ws.readyState !== 1) { log('Socket not ready', 'er'); return; }
+  ws.send(JSON.stringify({ match_join: { match_id: id } }));
+}
+
+function leaveMatch() {
+  if (ws && matchId) ws.send(JSON.stringify({ match_leave: { match_id: matchId } }));
+  matchId = null; myMark = null; lastState = null;
+  document.getElementById('gs').textContent = '—';
+  document.getElementById('gm').textContent = '—';
+  document.getElementById('gt').textContent = '—';
+  document.getElementById('result').textContent = '';
+  document.getElementById('timer').textContent = '';
+  resetBoard();
+  log('Left match', 'i');
+}
+
+function listMatches() {
+  rpc('rpc_list_matches', {}, function(data) {
+    if (!data.success) { log('list error', 'er'); return; }
+    var matches = data.data.matches || [];
+    if (Array.isArray(matches) === false) matches = Object.values(matches);
+    var html = matches.length === 0 ? '<i>No open matches</i>' :
+      matches.map(function(m) {
+        return '<div style="margin:3px 0">' + m.match_id.slice(0,12) + '... players:' + m.presences +
+          ' <button onclick="joinMatchSocket(\'' + m.match_id + '\')" style="padding:2px 8px;font-size:11px">Join</button></div>';
+      }).join('');
+    document.getElementById('match-list').innerHTML = html;
+    log('Found ' + matches.length + ' open match(es)', 'ok');
+  });
+}
+
+// ── Game ──────────────────────────────────────────────────────────────────
+function move(pos) {
+  if (!ws || !matchId)    { log('Not in a match', 'er'); return; }
+  if (!lastState || lastState.status !== 'playing') { log('Game not active', 'er'); return; }
+  if (lastState.turn !== myMark) { log('Not your turn!', 'er'); return; }
+  ws.send(JSON.stringify({ match_data_send: { match_id: matchId, op_code: 1, data: btoa(JSON.stringify({ position: pos })) } }));
+  log('Sent move: position ' + pos, 'i');
+}
+
+function updateGame(state) {
+  document.getElementById('gs').textContent = state.status;
+  document.getElementById('gt').textContent = state.turn || '—';
+
+  // Detect my mark
+  if (state.players && userId) {
+    var marks = Object.keys(state.players);
+    for (var mi = 0; mi < marks.length; mi++) {
+      var mark = marks[mi];
+      if (state.players[mark].id === userId) {
+        myMark = mark;
+        var gmEl = document.getElementById('gm');
+        gmEl.textContent = mark;
+        gmEl.style.color = mark === 'X' ? '#0f9' : '#f90';
+      }
+    }
+  }
+
+  // Normalize board (Lua 1-indexed → JS 0-indexed)
+  var board   = luaArrayToJs(state.board || {});
+  var winLine = normalizeWinLine(state.winning_line);
+
+  // Render cells
+  var cells = document.getElementById('board').children;
+  for (var i = 0; i < 9; i++) {
+    var cell = cells[i];
+    var val  = board[i] || '';
+    cell.textContent = val;
+    cell.className   = 'cell' + (val ? ' taken ' + val : '');
+    if (winLine.indexOf(i) !== -1) cell.className += ' win';
+  }
+
+  // Result banner
+  if (state.status === 'finished') {
+    document.getElementById('timer').textContent = '';
+    var res = document.getElementById('result');
+    if (state.winner === 'draw') {
+      res.textContent = "🤝 Draw!";      res.style.color = '#fa0';
+    } else if (state.winner === myMark) {
+      res.textContent = '🏆 You WIN! +200 pts'; res.style.color = '#0f9';
+    } else {
+      res.textContent = '💀 You lost. -50 pts';  res.style.color = '#f44';
+    }
+  } else {
+    document.getElementById('result').textContent = '';
+  }
+}
+
+function resetBoard() {
+  var cells = document.getElementById('board').children;
+  for (var i = 0; i < 9; i++) {
+    cells[i].textContent = '';
+    cells[i].className   = 'cell';
+  }
+}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────
+function getLeaderboard() {
+  rpc('rpc_get_leaderboard', { limit: 10 }, function(data) {
+    if (!data.success) { log('leaderboard error: ' + JSON.stringify(data), 'er'); return; }
+    var raw  = (data.data && data.data.records) ? data.data.records : [];
+    var rows = Array.isArray(raw) ? raw : Object.values(raw);
+    var text = rows.length === 0
+      ? 'No records yet. Play a game first!'
+      : rows.map(function(r) {
+          return '#' + r.rank + '  ' + pad(r.username,14) + '  Score:' + pad(r.score,6) + '  W:' + r.wins + ' L:' + r.losses + ' D:' + r.draws;
+        }).join('\n');
+    document.getElementById('lb-out').textContent = text;
+    log('Leaderboard loaded (' + rows.length + ' records)', 'ok');
+  });
+}
+
+function getMyStats() {
+  rpc('rpc_get_my_stats', {}, function(data) {
+    if (!data.success) { log('stats error: ' + JSON.stringify(data), 'er'); return; }
+    var d = data.data;
+    document.getElementById('lb-out').textContent =
+      'Username : ' + d.username + '\n' +
+      'Rank     : #' + (d.rank || '—') + '\n' +
+      'Score    : ' + d.score   + '\n' +
+      'Wins     : ' + d.wins    + '\n' +
+      'Losses   : ' + d.losses  + '\n' +
+      'Draws    : ' + d.draws;
+    log('Stats loaded', 'ok');
+  });
+}
+
+// ── RPC helper ────────────────────────────────────────────────────────────
+function rpc(id, payload, cb) {
+  if (!token) { log('Not authenticated', 'er'); return; }
+  fetch(BASE + '/v2/rpc/' + id + '?unwrap', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(JSON.stringify(payload))
+  })
+  .then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { throw new Error(r.status + ': ' + t); });
+    return r.json();
+  })
+  .then(function(data) { cb(data); })
+  .catch(function(e) { log('RPC [' + id + '] error: ' + e.message, 'er'); });
+}
+</script>
+</body>
+</html>
