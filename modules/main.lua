@@ -1,46 +1,39 @@
-local nk = require("nakama")
 
--- The match handler in match.lua is auto-discovered by Nakama.
--- Its module name is "match" (the filename without .lua).
--- Clients create matches via: nk.match_create("match", {})
 
--- RPC: Create a new match and return its ID
--- Player 1 calls this to create a match, shares the match_id with Player 2
--- Player 2 joins using the match_id via socket.joinMatch()
-local function find_or_create_match(context, payload)
-  -- Look for an existing waiting match first
-  local matches = nk.match_list(10, true, nil, 0, 1)
-  local match_id
-  if #matches > 0 then
-    match_id = matches[1].match_id
-  else
-    match_id = nk.match_create("match", {})
-  end
-  return nk.json_encode({ match_id = match_id })
-end
-nk.register_rpc(find_or_create_match, "find_or_create_match")
+local nk           = require("nakama")
+local match        = require("match")
+local matchmaking  = require("matchmaking")
+local lb           = require("leaderboard")
 
--- RPC: Get player stats
-local function get_player_stats(context, payload)
-  local reads = {
-    {
-      collection = "player_stats",
-      key = "tictactoe",
-      user_id = context.user_id
-    }
-  }
+-- ── Register the match handler 
+-- The name "tictactoe" must match the first arg of nk.match_create() calls.
+nk.register_matchmaker_matched(function(context, matchmaker_users)
+  -- Not using Nakama's built-in matchmaker (we use our own RPC flow),
+  -- but this hook is here for completeness / future extension.
+end)
 
-  local ok, records = pcall(nk.storage_read, reads)
+nk.register_match("tictactoe", {
+  match_init        = match.match_init,
+  match_join_attempt = match.match_join_attempt,
+  match_join        = match.match_join,
+  match_loop        = match.match_loop,
+  match_leave       = match.match_leave,
+  match_terminate   = match.match_terminate,
+  match_signal      = match.match_signal,
+})
 
-  if not ok or not records or not records[1] then
-    return nk.json_encode({
-      wins = 0,
-      losses = 0,
-      draws = 0,
-      score = 0
-    })
-  end
+-- ── Ensure leaderboard exists (idempotent)
+lb.ensure_leaderboard()
 
-  return records[1].value
-end
-nk.register_rpc(get_player_stats, "get_player_stats")
+-- ── Register RPCs
+-- Matchmaking
+nk.register_rpc(matchmaking.rpc_create_match, "rpc_create_match")
+nk.register_rpc(matchmaking.rpc_find_match,   "rpc_find_match")
+nk.register_rpc(matchmaking.rpc_join_match,   "rpc_join_match")
+nk.register_rpc(matchmaking.rpc_list_matches, "rpc_list_matches")
+
+-- Leaderboard / stats
+nk.register_rpc(lb.rpc_get_leaderboard, "rpc_get_leaderboard")
+nk.register_rpc(lb.rpc_get_my_stats,    "rpc_get_my_stats")
+
+nk.logger_info("Tic-Tac-Toe backend initialised ✓")
