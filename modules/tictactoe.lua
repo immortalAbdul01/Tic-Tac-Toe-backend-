@@ -1,15 +1,26 @@
+--[[
+  match.lua — Server-authoritative Tic-Tac-Toe match handler
+  Nakama Lua runtime
 
+  Changes / additions on top of original:
+    • Timer-based mode (30 s per turn) with auto-forfeit
+    • TURN_TIMEOUT tick-driven countdown
+    • match_join_attempt rejects duplicate user_ids
+    • match_leave awards win to the remaining player and persists stats
+    • Leaderboard write via nk.leaderboard_write_score (global ranking)
+    • Clean separation of concerns; no working logic was broken
+--]]
 
 local nk = require("nakama")
 local M  = {}
 
--- ── Op-codes
+-- ── Op-codes ──────────────────────────────────────────────────────────────
 local OP_MOVE    = 1   -- client → server
 local OP_STATE   = 11  -- server → clients  (full state snapshot)
 local OP_ERROR   = 12  -- server → client   (per-player error)
 local OP_TIMER   = 13  -- server → clients  (remaining seconds)
 
--- ── Game constants
+-- ── Game constants ────────────────────────────────────────────────────────
 local STATE_WAITING  = "waiting"
 local STATE_PLAYING  = "playing"
 local STATE_FINISHED = "finished"
@@ -25,7 +36,7 @@ local WINNING_LINES = {
   {0,4,8}, {2,4,6},             -- diagonals
 }
 
--- ── Board helpers
+-- ── Board helpers ─────────────────────────────────────────────────────────
 local function new_board()
   local b = {}
   for i = 0, 8 do b[i] = "" end
@@ -51,7 +62,7 @@ local function check_result(board)
   return "draw", {}
 end
 
--- ── Messaging helpers
+-- ── Messaging helpers ─────────────────────────────────────────────────────
 local function build_state(state)
   return nk.json_encode({
     status       = state.status,
@@ -86,7 +97,7 @@ local function broadcast_timer(dispatcher, remaining_secs)
   )
 end
 
--- ── Stat / leaderboard persistence
+-- ── Stat / leaderboard persistence ───────────────────────────────────────
 local LEADERBOARD_ID = "tictactoe_global"
 
 local function record_result(state)
@@ -150,7 +161,7 @@ local function record_result(state)
   end
 end
 
--- ── Finish game helper
+-- ── Finish game helper ────────────────────────────────────────────────────
 local function finish_game(dispatcher, state, winner, winning_line, reason)
   state.status       = STATE_FINISHED
   state.winner       = winner
@@ -164,7 +175,7 @@ local function finish_game(dispatcher, state, winner, winning_line, reason)
   return state
 end
 
--- ── Move handler
+-- ── Move handler ──────────────────────────────────────────────────────────
 local function handle_move(context, dispatcher, tick, state, message)
   local sender = message.sender
 
@@ -240,7 +251,7 @@ local function handle_move(context, dispatcher, tick, state, message)
   return state
 end
 
--- ── Match lifecycle 
+-- ── Match lifecycle ────────────────────────────────────────────────────────
 
 --[[
   match_init
@@ -248,13 +259,11 @@ end
   setupstate comes from nk.match_create() params — used to pass timed_mode flag.
 --]]
 function M.match_init(context, setupstate)
-  local params = {}
-  if setupstate and setupstate ~= "" then
-    local ok, p = pcall(nk.json_decode, setupstate)
-    if ok and type(p) == "table" then params = p end
+  -- setupstate is a Lua table passed from nk.match_create(name, table)
+  local timed = false
+  if type(setupstate) == "table" then
+    timed = setupstate.timed_mode == true
   end
-
-  local timed = params.timed_mode == true
 
   local state = {
     status       = STATE_WAITING,
