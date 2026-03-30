@@ -1,14 +1,22 @@
 local nk = require("nakama")
 
--- Matchmaker: when 2 players are matched, create a Tic Tac Toe match
-nk.register_matchmaker_matched(function(context, matched_users)
-  return nk.match_create("match", {})
-end)
+-- The match handler in match.lua is auto-discovered by Nakama.
+-- Its module name is "match" (the filename without .lua).
+-- Clients create matches via: nk.match_create("match", {})
 
--- RPC: Find or create a match (adds player to matchmaking)
+-- RPC: Create a new match and return its ID
+-- Player 1 calls this to create a match, shares the match_id with Player 2
+-- Player 2 joins using the match_id via socket.joinMatch()
 local function find_or_create_match(context, payload)
-  local ticket = nk.matchmaker_add(context, 2, 2, "*", {}, {})
-  return nk.json_encode({ ticket = ticket })
+  -- Look for an existing waiting match first
+  local matches = nk.match_list(10, true, nil, 0, 1)
+  local match_id
+  if #matches > 0 then
+    match_id = matches[1].match_id
+  else
+    match_id = nk.match_create("match", {})
+  end
+  return nk.json_encode({ match_id = match_id })
 end
 nk.register_rpc(find_or_create_match, "find_or_create_match")
 
